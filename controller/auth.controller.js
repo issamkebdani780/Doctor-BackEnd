@@ -4,18 +4,24 @@ import { pool } from '../database.js';
 
 
 export const signUp = async (req, res, next) => {
+    const connection = await pool.getConnection();
     try {
+        await connection.beginTransaction();
+
         const {
             firstName,
             lastName,
             email,
             password,
             phone,
-            specialty
+            specialty,
+            cabinetName,
+            cabinetAddress,
+            schedule
         } = req.body;
 
         // Validation des champs requis
-        if (!firstName || !lastName || !email || !password || !phone) {
+        if (!firstName || !lastName || !email || !password || !phone || !cabinetName || !cabinetAddress) {
             return res.status(400).json({
                 success: false,
                 message: 'Tous les champs obligatoires doivent être remplis'
@@ -31,7 +37,7 @@ export const signUp = async (req, res, next) => {
             });
         }
 
-        // Validation du mot de passe (min 8 caractères, 1 majuscule, 1 chiffre)
+        // Validation du mot de passe
         const passwordRegex = /^(?=.*[A-Z])(?=.*\d).{8,}$/;
         if (!passwordRegex.test(password)) {
             return res.status(400).json({
@@ -41,7 +47,7 @@ export const signUp = async (req, res, next) => {
         }
 
         // Vérifier si l'email existe déjà
-        const [existingDoctors] = await pool.query(
+        const [existingDoctors] = await connection.query(
             'SELECT id FROM doctors WHERE email = ?',
             [email]
         );
@@ -58,7 +64,7 @@ export const signUp = async (req, res, next) => {
         const passwordHash = await bcrypt.hash(password, salt);
 
         // Créer le médecin
-        const [result] = await pool.query(
+        const [result] = await connection.query(
             `INSERT INTO doctors 
             (email, password, first_name, last_name, phone, specialty) 
             VALUES (?, ?, ?, ?, ?, ?)`,
@@ -67,13 +73,32 @@ export const signUp = async (req, res, next) => {
 
         const doctorId = result.insertId;
 
+        // Structure par défaut si le planning n'est pas fourni
+        const defaultSchedule = {
+            monday: { isOpen: true, start: "09:00", end: "17:00" },
+            tuesday: { isOpen: true, start: "09:00", end: "17:00" },
+            wednesday: { isOpen: true, start: "09:00", end: "12:00" },
+            thursday: { isOpen: true, start: "09:00", end: "17:00" },
+            friday: { isOpen: true, start: "09:00", end: "17:00" },
+            saturday: { isOpen: false, start: "09:00", end: "12:00" },
+            sunday: { isOpen: false, start: "", end: "" }
+        };
+
+        // Créer le cabinet avec le planning
+        await connection.query(
+            `INSERT INTO cabinets (doctor_id, name, address, schedule) VALUES (?, ?, ?, ?)`,
+            [doctorId, cabinetName, cabinetAddress, JSON.stringify(schedule || defaultSchedule)]
+        );
+
+        await connection.commit();
+
         // Générer un token JWT
         const token = jwt.sign(
             {
                 doctorId: doctorId,
                 email: email
             },
-            process.env.JWT_SECRET,
+            process.env.JWT_SECRET || 'fallback_secret',
             { expiresIn: '7d' }
         );
 
@@ -85,18 +110,25 @@ export const signUp = async (req, res, next) => {
                 email: email,
                 firstName: firstName,
                 lastName: lastName,
+                phone: phone,
                 specialty: specialty,
+                cabinetName: cabinetName,
+                cabinetAddress: cabinetAddress,
+                schedule: schedule || defaultSchedule,
                 token: token
             }
         });
 
     } catch (error) {
+        if (connection) await connection.rollback();
         console.error('Erreur lors de l\'inscription:', error);
         res.status(500).json({
             success: false,
             message: 'Erreur lors de la création du compte',
             error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
+    } finally {
+        if (connection) connection.release();
     }
 };
 
@@ -116,16 +148,20 @@ export const signIn = async (req, res, next) => {
         // Récupérer le médecin
         const [doctors] = await pool.query(
             `SELECT 
-                id, 
-                email, 
-                password, 
-                first_name, 
-                last_name,
-                phone,
-                specialty,
-                created_at
-            FROM doctors
-            WHERE email = ?`,
+                d.id, 
+                d.email, 
+                d.password, 
+                d.first_name, 
+                d.last_name,
+                d.phone,
+                d.specialty,
+                d.created_at,
+                c.name as cabinet_name,
+                c.address as cabinet_address,
+                c.schedule as cabinet_schedule
+            FROM doctors d
+            LEFT JOIN cabinets c ON d.id = c.doctor_id
+            WHERE d.email = ?`,
             [email]
         );
 
@@ -168,6 +204,11 @@ export const signIn = async (req, res, next) => {
                 lastName: doctor.last_name,
                 phone: doctor.phone,
                 specialty: doctor.specialty,
+                cabinetName: doctor.cabinet_name,
+                cabinetAddress: doctor.cabinet_address,
+                schedule: typeof doctor.cabinet_schedule === 'string'
+                    ? JSON.parse(doctor.cabinet_schedule)
+                    : doctor.cabinet_schedule,
                 createdAt: doctor.created_at,
                 token: token
             }
@@ -208,16 +249,20 @@ export const getCurrentDoctor = async (req, res, next) => {
 
         const [doctors] = await pool.query(
             `SELECT 
-                id, 
-                email, 
-                first_name, 
-                last_name,
-                phone,
-                specialty,
-                created_at,
-                updated_at
-            FROM doctors
-            WHERE id = ?`,
+                d.id, 
+                d.email, 
+                d.first_name, 
+                d.last_name,
+                d.phone,
+                d.specialty,
+                d.created_at,
+                d.updated_at,
+                c.name as cabinet_name,
+                c.address as cabinet_address,
+                c.schedule as cabinet_schedule
+            FROM doctors d
+            LEFT JOIN cabinets c ON d.id = c.doctor_id
+            WHERE d.id = ?`,
             [doctorId]
         );
 
@@ -240,7 +285,12 @@ export const getCurrentDoctor = async (req, res, next) => {
                 phone: doctor.phone,
                 specialty: doctor.specialty,
                 createdAt: doctor.created_at,
-                updatedAt: doctor.updated_at
+                updatedAt: doctor.updated_at,
+                cabinetName: doctor.cabinet_name,
+                cabinetAddress: doctor.cabinet_address,
+                schedule: typeof doctor.cabinet_schedule === 'string'
+                    ? JSON.parse(doctor.cabinet_schedule)
+                    : doctor.cabinet_schedule
             }
         });
 
