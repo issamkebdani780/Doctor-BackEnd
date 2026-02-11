@@ -7,7 +7,6 @@ export const createAppointment = async (req, res) => {
             doctor_id,
             cabinet_id,
             appointment_date,
-            appointment_time,
             visit_type,
             notes
         } = req.body;
@@ -25,16 +24,11 @@ export const createAppointment = async (req, res) => {
         const reqStatus = req.body.status;
         const finalStatus = (reqStatus && validStatuses.includes(reqStatus)) ? reqStatus : 'nouveau';
 
-        let finalNotes = notes || '';
-        if (appointment_time) {
-            finalNotes = `[Time: ${appointment_time}] ${finalNotes}`;
-        }
-
         const [result] = await pool.query(
             `INSERT INTO appointments 
             (doctor_id, patient_id, cabinet_id, appointment_date, status, visit_type, notes) 
             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [doctor_id, patient_id, cabinet_id, appointment_date, finalStatus, visit_type, finalNotes]
+            [doctor_id, patient_id, cabinet_id, appointment_date, finalStatus, visit_type, notes || '']
         );
 
         res.status(201).json({
@@ -44,7 +38,7 @@ export const createAppointment = async (req, res) => {
                 id: result.insertId,
                 ...req.body,
                 status: finalStatus,
-                notes: finalNotes
+                notes: notes || ''
             }
         });
 
@@ -92,23 +86,9 @@ export const getAppointments = async (req, res) => {
             [doctorId]
         );
 
-        // Helper to extract time from notes if I put it there
-        const processedAppointments = appointments.map(app => {
-            let time = '00:00';
-            // Simple regex to extract [Time: HH:MM] from notes
-            const timeMatch = app.notes ? app.notes.match(/\[Time: (\d{1,2}:\d{2})\]/) : null;
-            if (timeMatch) {
-                time = timeMatch[1];
-            }
-            return {
-                ...app,
-                time // Add time field for frontend
-            };
-        });
-
         res.status(200).json({
             success: true,
-            data: processedAppointments
+            data: appointments
         });
 
     } catch (error) {
@@ -244,6 +224,49 @@ export const deleteAppointment = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Erreur lors de la suppression',
+            error: error.message
+        });
+    }
+};
+
+export const getAppointmentsByPatient = async (req, res) => {
+    try {
+        const { patientId } = req.params;
+
+        if (!patientId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Patient ID is required'
+            });
+        }
+
+        const [appointments] = await pool.query(
+            `SELECT 
+                id,
+                doctor_id,
+                patient_id,
+                cabinet_id,
+                DATE_FORMAT(appointment_date, '%Y-%m-%d') as appointment_date,
+                status,
+                visit_type,
+                notes,
+                created_at
+            FROM appointments 
+            WHERE patient_id = ?
+            ORDER BY appointment_date DESC, created_at DESC`,
+            [patientId]
+        );
+
+        res.status(200).json({
+            success: true,
+            data: appointments
+        });
+
+    } catch (error) {
+        console.error('Erreur lors de la récupération des rendez-vous du patient:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Erreur lors de la récupération des rendez-vous',
             error: error.message
         });
     }

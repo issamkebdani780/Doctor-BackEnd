@@ -1,6 +1,6 @@
 
 import { Router } from 'express';
-import { createAppointment, getAppointments, updateAppointmentStatus, updateAppointment, deleteAppointment } from '../controller/appointment.controller.js';
+import { createAppointment, getAppointments, updateAppointmentStatus, updateAppointment, deleteAppointment, getAppointmentsByPatient } from '../controller/appointment.controller.js';
 import { verifyToken } from '../middleware/auth.middleware.js';
 
 const appointmentRouter = Router();
@@ -12,5 +12,6 @@ appointmentRouter.get('/doctor/:doctorId', getAppointments);
 appointmentRouter.put('/:id/status', updateAppointmentStatus);
 appointmentRouter.put('/:id', updateAppointment);
 appointmentRouter.delete('/:id', deleteAppointment);
+appointmentRouter.get('/patient/:patientId', getAppointmentsByPatient);
 
 export default appointmentRouter;

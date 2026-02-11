@@ -5,15 +5,24 @@ export const getAllPatient = async (req, res, next) => {
         const doctorId = req.params.id;
         const searchTerm = req.query.search || '';
 
-        let query = "SELECT * FROM patients WHERE doctor_id = ?";
+        let query = `
+            SELECT p.*, 
+                (SELECT MAX(appointment_date) FROM appointments WHERE patient_id = p.id AND appointment_date < CURRENT_DATE AND status NOT IN ('ne_repond_pas', 'reprogramme')) as last_visit,
+                (SELECT MIN(appointment_date) FROM appointments WHERE patient_id = p.id AND appointment_date >= CURRENT_DATE AND status NOT IN ('ne_repond_pas', 'reprogramme')) as next_visit,
+                (SELECT COUNT(*) FROM appointments WHERE patient_id = p.id AND appointment_date < CURRENT_DATE AND status NOT IN ('ne_repond_pas', 'reprogramme')) as total_past,
+                (SELECT COUNT(*) FROM appointments WHERE patient_id = p.id AND appointment_date >= CURRENT_DATE AND status NOT IN ('ne_repond_pas', 'reprogramme')) as total_future,
+                (SELECT COUNT(*) FROM appointments WHERE patient_id = p.id AND status IN ('ne_repond_pas', 'reprogramme')) as nrp_count
+            FROM patients p
+            WHERE p.doctor_id = ?
+        `;
         let queryParams = [doctorId];
 
         if (searchTerm) {
             query += ` AND (
-                first_name LIKE ? OR 
-                last_name LIKE ? OR 
-                email LIKE ? OR 
-                phone LIKE ?
+                p.first_name LIKE ? OR 
+                p.last_name LIKE ? OR 
+                p.email LIKE ? OR 
+                p.phone LIKE ?
             )`;
             const searchPattern = `%${searchTerm}%`;
             queryParams.push(searchPattern, searchPattern, searchPattern, searchPattern);
