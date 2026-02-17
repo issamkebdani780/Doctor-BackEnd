@@ -1,6 +1,6 @@
 // middleware/auth.middleware.js
 import jwt from 'jsonwebtoken';
-import { pool } from '../database.js';
+import pool from '../database.js';
 
 export const verifyToken = async (req, res, next) => {
     try {
