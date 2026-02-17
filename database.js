@@ -4,14 +4,11 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const pool = mysql.createPool({
-  host: process.env.MYSQLHOST || process.env.MYSQL_HOST,
-  user: process.env.MYSQLUSER || process.env.MYSQL_USER,
-  password: process.env.MYSQLPASSWORD || process.env.MYSQL_PASSWORD,
-  database: process.env.MYSQLDATABASE || process.env.MYSQL_NAME,
-  port: parseInt(process.env.MYSQLPORT || process.env.MYSQL_PORT || '3306'),
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
+  host: process.env.MYSQLHOST ,
+  user: process.env.MYSQLUSER ,
+  password: process.env.MYSQLPASSWORD ,
+  database: process.env.MYSQLDATABASE ,
+  port: process.env.MYSQLPORT
 });
 
 // Test connection on startup
