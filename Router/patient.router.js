@@ -11,12 +11,12 @@ const patientRoute = Router();
 
 patientRoute.use(verifyToken);
 
-patientRoute.get('/:id', getAllPatient);                    
+patientRoute.post('/add', addPatient);
 
-patientRoute.post('/add', addPatient);                      
+patientRoute.get('/:id', getAllPatient);
 
-patientRoute.put('/:patientId', updatePatient);             
+patientRoute.put('/:patientId', updatePatient);
 
-patientRoute.delete('/:patientId', deletePatient);          
+patientRoute.delete('/:patientId', deletePatient);
 
 export default patientRoute;

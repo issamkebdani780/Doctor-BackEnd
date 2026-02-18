@@ -1,18 +1,19 @@
-import pool  from "../database.js";
+import pool from "../database.js";
 
 export const getAllPatient = async (req, res, next) => {
     try {
         const doctorId = req.params.id;
         const searchTerm = req.query.search || '';
-
         let query = `
-            SELECT p.*, 
-                (SELECT MAX(appointment_date) FROM appointments WHERE patient_id = p.id AND appointment_date < CURRENT_DATE AND status NOT IN ('ne_repond_pas', 'reprogramme')) as last_visit,
-                (SELECT MIN(appointment_date) FROM appointments WHERE patient_id = p.id AND appointment_date >= CURRENT_DATE AND status NOT IN ('ne_repond_pas', 'reprogramme')) as next_visit,
-                (SELECT COUNT(*) FROM appointments WHERE patient_id = p.id AND appointment_date < CURRENT_DATE AND status NOT IN ('ne_repond_pas', 'reprogramme')) as total_past,
-                (SELECT COUNT(*) FROM appointments WHERE patient_id = p.id AND appointment_date >= CURRENT_DATE AND status NOT IN ('ne_repond_pas', 'reprogramme')) as total_future,
-                (SELECT COUNT(*) FROM appointments WHERE patient_id = p.id AND status IN ('ne_repond_pas', 'reprogramme')) as nrp_count
+            SELECT 
+                p.*,
+                MAX(CASE WHEN a.appointment_date < CURRENT_DATE AND a.status NOT IN ('ne_repond_pas', 'reprogramme') THEN a.appointment_date END) as last_visit,
+                MIN(CASE WHEN a.appointment_date >= CURRENT_DATE AND a.status NOT IN ('ne_repond_pas', 'reprogramme') THEN a.appointment_date END) as next_visit,
+                COUNT(CASE WHEN a.appointment_date < CURRENT_DATE AND a.status NOT IN ('ne_repond_pas', 'reprogramme') THEN 1 END) as total_past,
+                COUNT(CASE WHEN a.appointment_date >= CURRENT_DATE AND a.status NOT IN ('ne_repond_pas', 'reprogramme') THEN 1 END) as total_future,
+                COUNT(CASE WHEN a.status IN ('ne_repond_pas', 'reprogramme') THEN 1 END) as nrp_count
             FROM patients p
+            LEFT JOIN appointments a ON a.patient_id = p.id
             WHERE p.doctor_id = ?
         `;
         let queryParams = [doctorId];
@@ -28,6 +29,8 @@ export const getAllPatient = async (req, res, next) => {
             queryParams.push(searchPattern, searchPattern, searchPattern, searchPattern);
         }
 
+        query += ` GROUP BY p.id`;
+
         const [patients] = await pool.query(query, queryParams);
 
         res.status(200).json({
@@ -37,10 +40,7 @@ export const getAllPatient = async (req, res, next) => {
         });
     } catch (err) {
         console.error(err);
-        res.status(500).json({
-            success: false,
-            message: 'Erreur lors de la récupération des patients',
-        });
+        next(err);
     }
 };
 
@@ -63,14 +63,12 @@ export const addPatient = async (req, res, next) => {
             });
         }
 
-        if (email) {
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(email)) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Format d\'email invalide'
-                });
-            }
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            return res.status(400).json({
+                success: false,
+                message: "Format d'email invalide"
+            });
         }
 
         const [existingPatient] = await pool.query(
@@ -111,11 +109,7 @@ export const addPatient = async (req, res, next) => {
                 message: 'Un patient avec ces informations existe déjà'
             });
         }
-        res.status(500).json({
-            success: false,
-            message: 'Erreur lors de l\'ajout du patient',
-            error: process.env.NODE_ENV === 'development' ? err.message : undefined
-        });
+        next(err); 
     }
 };
 
@@ -124,9 +118,29 @@ export const updatePatient = async (req, res, next) => {
         const patientId = req.params.patientId;
         const { firstName, lastName, email, phone, birthday, gender, status } = req.body;
 
+        if (phone) {
+            const phoneRegex = /^0[567]\d{8}$/;
+            if (!phoneRegex.test(phone)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Le numéro de téléphone doit contenir 10 chiffres et commencer par 05, 06 ou 07'
+                });
+            }
+        }
+
+        if (email) {
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(email)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Format d'email invalide"
+                });
+            }
+        }
+
         const [existingPatient] = await pool.query(
-            'SELECT id FROM patients WHERE id = ?',
-            [patientId]
+            'SELECT id FROM patients WHERE id = ? AND doctor_id = ?',
+            [patientId, req.user.id]
         );
 
         if (existingPatient.length === 0) {
@@ -146,16 +160,6 @@ export const updatePatient = async (req, res, next) => {
         if (birthday !== undefined) { updates.push('birth_date = ?'); values.push(birthday || null); }
         if (gender) { updates.push('gender = ?'); values.push(gender); }
         if (status) { updates.push('status = ?'); values.push(status); }
-
-        if (phone) {
-            const phoneRegex = /^0[567]\d{8}$/;
-            if (!phoneRegex.test(phone)) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Le numéro de téléphone doit contenir 10 chiffres et commencer par 05, 06 ou 07'
-                });
-            }
-        }
 
         if (updates.length === 0) {
             return res.status(400).json({
@@ -184,11 +188,7 @@ export const updatePatient = async (req, res, next) => {
 
     } catch (err) {
         console.error('Error updating patient:', err);
-        res.status(500).json({
-            success: false,
-            message: 'Erreur lors de la mise à jour du patient',
-            error: process.env.NODE_ENV === 'development' ? err.message : undefined
-        });
+        next(err); 
     }
 };
 
@@ -197,8 +197,8 @@ export const deletePatient = async (req, res, next) => {
         const patientId = req.params.patientId;
 
         const [result] = await pool.query(
-            'DELETE FROM patients WHERE id = ?',
-            [patientId]
+            'DELETE FROM patients WHERE id = ? AND doctor_id = ?',
+            [patientId, req.user.id]
         );
 
         if (result.affectedRows === 0) {
@@ -215,9 +215,6 @@ export const deletePatient = async (req, res, next) => {
 
     } catch (err) {
         console.error('Error deleting patient:', err);
-        res.status(500).json({
-            success: false,
-            message: 'Erreur lors de la suppression du patient'
-        });
+        next(err); 
     }
 };
